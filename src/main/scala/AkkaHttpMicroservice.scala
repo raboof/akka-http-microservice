@@ -1,6 +1,6 @@
 import akka.actor.ActorSystem
 import akka.event.{LoggingAdapter, Logging}
-import akka.http.scaladsl.Http
+import akka.http.scaladsl.{ConnectionContext,HttpsConnectionContext,Http}
 import akka.http.scaladsl.client.RequestBuilding
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
 import akka.http.scaladsl.marshalling.ToResponseMarshallable
@@ -12,10 +12,13 @@ import akka.stream.{ActorMaterializer, Materializer}
 import akka.stream.scaladsl.{Flow, Sink, Source}
 import com.typesafe.config.Config
 import com.typesafe.config.ConfigFactory
-import java.io.IOException
+import com.typesafe.sslconfig.akka.AkkaSSLConfig
+import java.io.{IOException, InputStream}
+import java.security.{ SecureRandom, KeyStore }
+import javax.net.ssl.{ SSLContext, TrustManagerFactory, KeyManagerFactory }
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.math._
-import spray.json.DefaultJsonProtocol
+import spray.json._
 
 case class IpInfo(query: String, country: Option[String], city: Option[String], lat: Option[Double], lon: Option[Double])
 
@@ -79,6 +82,13 @@ trait Service extends Protocols {
 
   val routes = {
     logRequestResult("akka-http-microservice") {
+      path("beat") {
+        (post & entity(as[JsValue])) { jsValue =>
+          complete {
+            JsObject(Seq("success" -> JsString("OK")).toMap)
+          }
+        }
+      } ~
       pathPrefix("ip") {
         (get & path(Segment)) { ip =>
           complete {
@@ -112,5 +122,25 @@ object AkkaHttpMicroservice extends App with Service {
   override val config = ConfigFactory.load()
   override val logger = Logging(system, getClass)
 
+  // From http://doc.akka.io/docs/akka/2.4.7/scala/http/server-side-https-support.html
+  val password: Array[Char] = "geheim".toCharArray
+
+  val ks: KeyStore = KeyStore.getInstance("PKCS12")
+  val keystore: InputStream = getClass.getClassLoader.getResourceAsStream("example.com.p12")
+
+  require(keystore != null, "Keystore required!")
+  ks.load(keystore, password)
+
+  val keyManagerFactory: KeyManagerFactory = KeyManagerFactory.getInstance("SunX509")
+  keyManagerFactory.init(ks, password)
+
+  val tmf: TrustManagerFactory = TrustManagerFactory.getInstance("SunX509")
+  tmf.init(ks)
+
+  val sslContext: SSLContext = SSLContext.getInstance("TLS")
+  sslContext.init(keyManagerFactory.getKeyManagers, tmf.getTrustManagers, SecureRandom.getInstanceStrong)
+  val https: HttpsConnectionContext = ConnectionContext.https(sslContext)
+
   Http().bindAndHandle(routes, config.getString("http.interface"), config.getInt("http.port"))
+  Http().bindAndHandle(routes, config.getString("https.interface"), config.getInt("https.port"), connectionContext = https)
 }
