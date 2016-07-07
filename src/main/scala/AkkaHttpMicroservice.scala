@@ -138,7 +138,7 @@ object AkkaHttpMicroservice extends App with Service {
   tmf.init(ks)
 
   val sslContext: SSLContext = SSLContext.getInstance("TLS")
-  sslContext.init(keyManagerFactory.getKeyManagers, tmf.getTrustManagers, SecureRandom.getInstanceStrong)
+  sslContext.init(keyManagerFactory.getKeyManagers, tmf.getTrustManagers, new SecureRandom)
   val https: HttpsConnectionContext = ConnectionContext.https(sslContext)
 
   Http().bindAndHandle(routes, config.getString("http.interface"), config.getInt("http.port"))
